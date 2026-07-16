@@ -1,0 +1,17 @@
+__pycache__/
+lib/__pycache__/
+*.pyc
+
+venv/
+
+images/
+files/
+
+logs/
+.env
+
+*.tflite
+
+*.pt
+
+*.onnx
