@@ -196,6 +196,8 @@ def calcPixelChange(frame):
         print(f"pixel changes MEAN - {np.mean(lastPxChanges)}")
         print(f"pixel changes lastPxChange - {lastPxChange}")
         print(f"pixel changes lastPxChange 1111 - {pxChangeDiff}")
+        print(f"lastEntropies MEAN - {np.mean(lastEntropies)}")
+        print(f"lastEntropy - {lastEntropy}")
         return True;
 
     return False
@@ -227,7 +229,7 @@ def checkIfCanRun(frame):
         filename = DAMAGED_FRAME_PATH / filename
 
         cv2.imwrite(str(filename), frame)
-        time.sleep(3)
+        time.sleep(1)
         return False
         
     return True
