@@ -1,3 +1,4 @@
+from lib.ReolinkController import ReolinkController
 from ultralytics import YOLO
 import cv2
 import requests
@@ -21,7 +22,11 @@ from settings import CHAT_ID
 
 
 static_filter = StaticObjectFilter()
-
+cameraController = ReolinkController(
+    host=REOLINK_IP,
+    username=REOLINK_USER,
+    password=REOLINK_PASSWORD
+)
 
 
 MODEL_PATH = "best.pt"
@@ -288,6 +293,7 @@ def buff(frame, confidence, results):
 
             if detection == detections[0] or detection == detections[-1]:
                 send_photo(destination_annotated, detection["confidence"])
+        cameraController.siren_on()
         detections.clear()
 
 while True:

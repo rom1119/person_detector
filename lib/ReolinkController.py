@@ -132,25 +132,49 @@ class ReolinkController:
 
     async def siren_off(self):
 
-        await self.camera.set_siren(
-            self.channel,
-            False
-        )
+        if not self.connected:
+            await self.connect()
+
+        try:
+            await self.camera.set_siren(
+                self.channel,
+                False
+            )
+        except Exception:
+
+            self.connected = False
+            await self.connect()
 
     async def flash(self, seconds):
 
-        await self.light_on()
+        if not self.connected:
+            await self.connect()
 
-        await asyncio.sleep(seconds)
+        try:
+            await self.light_on()
 
-        await self.light_off()
+            await asyncio.sleep(seconds)
+
+            await self.light_off()
+        except Exception:
+
+            self.connected = False
+            await self.connect()
 
     async def alarm(self, seconds):
 
-        await self.light_on()
-        await self.siren_on()
+        if not self.connected:
+            await self.connect()
 
-        await asyncio.sleep(seconds)
+        try:
+            await self.light_on()
+            await self.siren_on()
 
-        await self.siren_off()
-        await self.light_off()
+            await asyncio.sleep(seconds)
+
+            await self.siren_off()
+            await self.light_off()
+        except Exception:
+
+            self.connected = False
+            await self.connect()
