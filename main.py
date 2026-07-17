@@ -293,7 +293,7 @@ def buff(frame, confidence, results):
 
             if detection == detections[0] or detection == detections[-1]:
                 send_photo(destination_annotated, detection["confidence"])
-        cameraController.siren_on()
+        cameraController.alarm(3)
         detections.clear()
 
 while True:
