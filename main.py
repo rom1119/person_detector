@@ -27,7 +27,7 @@ cameraController = ReolinkController(
     username=REOLINK_USER,
     password=REOLINK_PASSWORD
 )
-
+cameraController.start()
 
 MODEL_PATH = "best.pt"
 
