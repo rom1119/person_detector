@@ -181,7 +181,7 @@ def calcPixelChange(frame):
     
     entropyChangeDiff = abs((np.mean(lastEntropies) - lastEntropy))
     resEntropy = entropyChangeDiff > 1
-    res = pxChangeDiff > 1
+    res = pxChangeDiff > 1.6
     
     #print(f"lastEntropies MEAN - {np.mean(lastEntropies)}")
     #print(f"lastEntropy - {lastEntropy}")
