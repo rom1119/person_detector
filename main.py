@@ -13,6 +13,8 @@ import shutil
 from collections import deque
 import math
 from lib.static_filter import StaticObjectFilter
+import asyncio
+
 from settings import RTSP_URL
 from settings import REOLINK_IP
 from settings import REOLINK_USER
@@ -27,7 +29,7 @@ cameraController = ReolinkController(
     username=REOLINK_USER,
     password=REOLINK_PASSWORD
 )
-cameraController.start()
+asyncio.run(cameraController.start())
 
 MODEL_PATH = "best.pt"
 
@@ -293,7 +295,7 @@ def buff(frame, confidence, results):
 
             if detection == detections[0] or detection == detections[-1]:
                 send_photo(destination_annotated, detection["confidence"])
-        cameraController.alarm(3)
+        asyncio.run(cameraController.alarm(3))
         detections.clear()
 
 while True:
