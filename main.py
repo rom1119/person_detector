@@ -35,7 +35,7 @@ MODEL_PATH = "best.pt"
 
 
 DETECTION_START_HOUR = 1
-DETECTION_END_HOUR = 23
+DETECTION_END_HOUR = 5
 
 CONFIDENCE = 0.49
 
@@ -297,7 +297,7 @@ def buff(frame, confidence, results):
 
             if detection == detections[0] or detection == detections[-1]:
                 send_photo(destination_annotated, detection["confidence"])
-        asyncio.run(cameraController.alarm(3))
+        # asyncio.run(cameraController.alarm(3))
         detections.clear()
 
 while True:
