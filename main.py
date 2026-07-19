@@ -13,6 +13,7 @@ import shutil
 from collections import deque
 import math
 from lib.static_filter import StaticObjectFilter
+from lib.NotificationWorker import NotificationWorker
 import asyncio
 
 from settings import RTSP_URL
@@ -21,6 +22,7 @@ from settings import REOLINK_USER
 from settings import REOLINK_PASSWORD
 from settings import BOT_TOKEN
 from settings import CHAT_ID
+from settings import HOUR_END
 
 
 static_filter = StaticObjectFilter()
@@ -35,7 +37,7 @@ MODEL_PATH = "best.pt"
 
 
 DETECTION_START_HOUR = 1
-DETECTION_END_HOUR = 5
+DETECTION_END_HOUR = HOUR_END
 
 CONFIDENCE = 0.49
 
@@ -146,18 +148,6 @@ class Camera:
             return self.frame.copy()
 
 camera = Camera(RTSP_URL)
-
-def sendPhotoReq(photo, confidence):
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-        data={
-            "chat_id": CHAT_ID,
-            "caption": f"Wykryto osobę na podwórku (time= {datetime.now()}) , confidence= {confidence:.2f}"
-        },
-        files={
-            "photo": photo
-        }
-    )
     
 def calcPixelChange(frame):
     global lastPxChange
@@ -207,12 +197,34 @@ def send_photo(photo_path, confidence):
     with open(photo_path, "rb") as photo:
         try:
             time.sleep(0.1)
-            sendPhotoReq(photo, confidence)
+            requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+                data={
+                    "chat_id": CHAT_ID,
+                    "caption": f"Wykryto osobę na podwórku (time= {datetime.now()}) , confidence= {confidence:.2f}"
+                },
+                files={
+                    "photo": photo
+                }
+            )
         except:
             time.sleep(1)
-            send_photo(photo_path, confidence)
+            requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+                data={
+                    "chat_id": CHAT_ID,
+                    "caption": f"Wykryto osobę na podwórku (time= {datetime.now()}) , confidence= {confidence:.2f}"
+                },
+                files={
+                    "photo": photo
+                }
+            )
 
-    
+notification_worker = NotificationWorker(
+    send_photo
+)
+
+
 def checkIfCanRun(frame):
     global last
         
@@ -296,7 +308,9 @@ def buff(frame, confidence, results):
             )
 
             if detection == detections[0] or detection == detections[-1]:
-                send_photo(destination_annotated, detection["confidence"])
+                notification_worker.add(
+                    (destination_annotated, detection["confidence"])
+                )
         # asyncio.run(cameraController.alarm(3))
         detections.clear()
 
@@ -380,7 +394,7 @@ while True:
                         print(f"Podejrzany ruch duzy skok ")
                         detected = False
                         continue
-                    if avg_distance < 4.5:
+                    if avg_distance < 3.5:
                         print(f"Podejrzany ruch maly ruch ")
                         detected = False
                         continue

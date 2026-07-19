@@ -12,3 +12,5 @@ REOLINK_PASSWORD = os.getenv("REOLINK_PASSWORD")
 
 BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+HOUR_END = int(os.getenv("HOUR_END"))
