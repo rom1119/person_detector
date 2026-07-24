@@ -20,6 +20,8 @@ class ReolinkController:
 
         self.camera = None
         self.connected = False
+        self.siren_active = False
+        self.light_active = False
 
     async def connect(self):
 
@@ -166,7 +168,12 @@ class ReolinkController:
         if not self.connected:
             await self.connect()
 
+        if self.siren_active:
+            return
+
         try:
+            self.siren_active = True
+
             await self.light_on()
             await self.siren_on()
 
@@ -174,6 +181,7 @@ class ReolinkController:
 
             await self.siren_off()
             await self.light_off()
+            self.siren_active = False
         except Exception:
 
             self.connected = False
