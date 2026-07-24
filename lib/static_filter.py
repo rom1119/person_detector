@@ -80,7 +80,7 @@ class StaticObjectFilter:
 
         history = track.history
 
-        if len(history) < 4:
+        if len(history) < 3:
             return False
 
         if history[-1][0] - history[0][0] < self.static_time - 2:

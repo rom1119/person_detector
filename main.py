@@ -311,7 +311,8 @@ def buff(frame, confidence, results):
                 notification_worker.add(
                     (destination_annotated, detection["confidence"])
                 )
-        # asyncio.run(cameraController.alarm(3))
+        asyncio.run(cameraController.alarm(5))
+        asyncio.run(cameraController.flash(5))
         detections.clear()
 
 while True:
