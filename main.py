@@ -31,7 +31,6 @@ cameraController = ReolinkController(
     username=REOLINK_USER,
     password=REOLINK_PASSWORD
 )
-asyncio.run(cameraController.start())
 
 MODEL_PATH = "best.pt"
 
@@ -311,7 +310,7 @@ def buff(frame, confidence, results):
                 notification_worker.add(
                     (destination_annotated, detection["confidence"])
                 )
-        asyncio.run(cameraController.alarm(5))
+        cameraController.alarm(5)
         # asyncio.run(cameraController.flash(5))
         detections.clear()
 

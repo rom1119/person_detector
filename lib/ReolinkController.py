@@ -1,6 +1,7 @@
 import asyncio
 
 from reolink_aio.api import Host
+import threading
 
 
 class ReolinkController:
@@ -20,6 +21,14 @@ class ReolinkController:
 
         self.camera = None
         self.connected = False
+
+        self.loop = asyncio.new_event_loop()
+
+        threading.Thread(
+            target=self._run_loop,
+            daemon=True
+        ).start()
+
         self.siren_active = False
         self.light_active = False
 
@@ -80,6 +89,15 @@ class ReolinkController:
             self.watchdog()
         )
 
+    def _run_loop(self):
+
+        asyncio.set_event_loop(self.loop)
+
+        self.loop.create_task(
+            self.start()
+        )
+
+        self.loop.run_forever()
 
 
 
@@ -163,7 +181,14 @@ class ReolinkController:
             self.connected = False
             await self.connect()
 
-    async def alarm(self, seconds):
+    def alarm(self, seconds):
+
+        asyncio.run_coroutine_threadsafe(
+            self._alarm(seconds),
+            self.loop
+        )
+
+    async def _alarm(self, seconds):
 
         if not self.connected:
             await self.connect()
@@ -183,6 +208,6 @@ class ReolinkController:
             await self.light_off()
             self.siren_active = False
         except Exception:
-
+            self.siren_active = False
             self.connected = False
             await self.connect()
