@@ -51,7 +51,7 @@ class ReolinkController:
 
                 self.connected = True
 
-                print("CONNECTED")
+                print("CONNECTED REOLINK")
 
                 return
 
@@ -68,12 +68,12 @@ class ReolinkController:
         while True:
 
             try:
-
+                await self.camera.get_host_data()
                 await self.camera.get_states()
 
             except Exception:
 
-                print("RECONNECT")
+                print("RECONNECT REOLINK")
 
                 self.connected = False
 
@@ -135,7 +135,7 @@ class ReolinkController:
             self.connected = False
             await self.connect()
 
-    async def siren_on(self):
+    async def siren_on(self, duration=5):
 
         if not self.connected:
             await self.connect()
@@ -143,22 +143,8 @@ class ReolinkController:
         try:
             await self.camera.set_siren(
                 self.channel,
-                True
-            )
-        except Exception:
-
-            self.connected = False
-            await self.connect()
-
-    async def siren_off(self):
-
-        if not self.connected:
-            await self.connect()
-
-        try:
-            await self.camera.set_siren(
-                self.channel,
-                False
+                True,
+                duration
             )
         except Exception:
 
@@ -181,7 +167,7 @@ class ReolinkController:
             self.connected = False
             await self.connect()
 
-    def alarm(self, seconds):
+    def alarm(self, seconds = 10):
 
         asyncio.run_coroutine_threadsafe(
             self._alarm(seconds),
@@ -200,11 +186,11 @@ class ReolinkController:
             self.siren_active = True
 
             await self.light_on()
-            await self.siren_on()
+            await self.siren_on(seconds)
 
             await asyncio.sleep(seconds)
 
-            await self.siren_off()
+            # await self.siren_off()
             await self.light_off()
             self.siren_active = False
         except Exception:
