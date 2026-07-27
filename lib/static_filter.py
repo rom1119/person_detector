@@ -11,7 +11,7 @@ class StaticObjectFilter:
         static_time=30,
         ignore_time=120,
         match_distance=60,
-        max_move=3
+        max_move=2
     ):
 
         self.static_time = static_time

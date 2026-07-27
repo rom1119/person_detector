@@ -394,7 +394,7 @@ while True:
                         print(f"Podejrzany ruch duzy skok ")
                         detected = False
                         continue
-                    if avg_distance < 3.5:
+                    if avg_distance < 3:
                         print(f"Podejrzany ruch maly ruch ")
                         detected = False
                         continue
