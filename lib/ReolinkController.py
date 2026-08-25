@@ -167,7 +167,7 @@ class ReolinkController:
             self.connected = False
             await self.connect()
 
-    def alarm(self, seconds = 10):
+    def alarm(self, seconds = 30):
 
         asyncio.run_coroutine_threadsafe(
             self._alarm(seconds),

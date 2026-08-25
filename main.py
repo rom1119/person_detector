@@ -38,7 +38,7 @@ MODEL_PATH = "best.pt"
 DETECTION_START_HOUR = 1
 DETECTION_END_HOUR = HOUR_END
 
-CONFIDENCE = 0.49
+CONFIDENCE = 0.50
 
 model = YOLO(MODEL_PATH)
 
@@ -62,7 +62,7 @@ lastEntropies = deque(maxlen=10)
 last_centers = deque(maxlen=5)
 distances = deque(maxlen=4)
 
-MIN_DETECTIONS = 5
+MIN_DETECTIONS = 7
 WINDOW_SECONDS = 60
 
 THRESHOLD_DAMAGED_FRAME = 15
