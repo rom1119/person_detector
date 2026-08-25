@@ -1,3 +1,5 @@
+import os
+os.environ["TORCH_CPP_LOG_LEVEL"] = "ERROR"
 from lib.ReolinkController import ReolinkController
 from ultralytics import YOLO
 import cv2
