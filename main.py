@@ -1,4 +1,4 @@
-from lib.ReolinkController import ReolinkController
+# from lib.ReolinkController import ReolinkController
 from ultralytics import YOLO
 import cv2
 import requests
@@ -26,11 +26,11 @@ from settings import HOUR_END
 
 
 static_filter = StaticObjectFilter()
-cameraController = ReolinkController(
-    host=REOLINK_IP,
-    username=REOLINK_USER,
-    password=REOLINK_PASSWORD
-)
+# cameraController = ReolinkController(
+#     host=REOLINK_IP,
+#     username=REOLINK_USER,
+#     password=REOLINK_PASSWORD
+# )
 
 MODEL_PATH = "best.pt"
 
@@ -310,7 +310,7 @@ def buff(frame, confidence, results):
                 notification_worker.add(
                     (destination_annotated, detection["confidence"])
                 )
-        cameraController.alarm()
+        # cameraController.alarm()
         # asyncio.run(cameraController.flash(5))
         detections.clear()
 
