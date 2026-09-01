@@ -190,7 +190,7 @@ class ReolinkController:
 
             await asyncio.sleep(seconds)
 
-            # await self.siren_off()
+            await self.siren_off()
             await self.light_off()
             self.siren_active = False
         except Exception:
