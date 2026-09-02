@@ -150,6 +150,21 @@ class ReolinkController:
 
             self.connected = False
             await self.connect()
+    
+    async def siren_off(self):
+
+        if not self.connected:
+            await self.connect()
+
+        try:
+            await self.camera.set_siren(
+                self.channel,
+                False
+            )
+        except Exception:
+
+            self.connected = False
+            await self.connect()
 
     async def flash(self, seconds):
 

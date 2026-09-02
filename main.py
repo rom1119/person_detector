@@ -313,7 +313,6 @@ def buff(frame, confidence, results):
                     (destination_annotated, detection["confidence"])
                 )
         cameraController.alarm()
-        # asyncio.run(cameraController.flash(5))
         detections.clear()
 
 while True:
