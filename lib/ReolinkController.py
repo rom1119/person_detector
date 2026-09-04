@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 
 from reolink_aio.api import Host
 import threading
@@ -130,8 +131,10 @@ class ReolinkController:
                 self.channel,
                 False
             )
-        except Exception:
-
+        except Exception as e:
+            print(f"============================== LIGHT OFF ERR =====================")
+            print(f"ERROR: {e}")
+            traceback.print_exc()
             self.connected = False
             await self.connect()
 
