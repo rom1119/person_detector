@@ -15,6 +15,7 @@ import shutil
 from collections import deque
 import math
 from lib.static_filter import StaticObjectFilter
+from lib.static_object_mask import StaticObjectMasker
 from lib.NotificationWorker import NotificationWorker
 import asyncio
 
@@ -28,6 +29,18 @@ from settings import HOUR_END
 
 
 static_filter = StaticObjectFilter()
+# Parametry maskowania zmieniaj tutaj; wartości domyślne są też w klasie.
+static_object_mask = StaticObjectMasker(
+    required_hits=4,          # Ile zgodnych wykryć potrzeba do utworzenia maski (min. 3).
+    window_seconds=30,        # Okno historii w sekundach; starsze wykrycia nie są liczone.
+    mask_seconds=120,         # Czas życia maski w sekundach, bez przedłużania wykryciami.
+    patch_size=10,            # Bok czarnej łaty w pikselach oryginalnej klatki.
+    center_tolerance=12,      # Tolerancja położenia i rozrzutu środka ramki w pikselach.
+    size_tolerance=0.35,      # Tolerancja zmiany szerokości/wysokości: 0.35 = 35% (min. 4 px).
+    movement_threshold=4,    # Spójne przesunięcie od tylu pikseli wyklucza nieruchomość.
+    probe_interval=15,       # Co ile sekund YOLO sprawdza klatkę bez maski.
+    missing_probes=2,        # Ile kontroli bez obiektu usuwa maskę przed upływem jej czasu.
+)
 cameraController = ReolinkController(
     host=REOLINK_IP,
     username=REOLINK_USER,
@@ -258,12 +271,12 @@ def buff(frame, confidence, results):
     filename = timestamp.strftime(
         f"p_%Y_%m_%d_%H_%M_%S_%f_{confidence:.2f}_{lastPxChange:.2f}_{lastEntropy:.2f}.jpg"
     )
-# save frame
+# Zapisz oryginalną klatkę bez maski i bez ramek YOLO.
     filename_buff = BUFFER_DIR / filename
 
     cv2.imwrite(str(filename_buff), frame)
     
-# save annotated frame
+# Zapisz ramki YOLO na obrazie użytym do predykcji, razem z zastosowaną maską.
     filename_buff_annotation = BUFFER_ANNOTATED_DIR / filename
 
     annotated_frame = results[0].plot(line_width=1,font_size=1)
@@ -336,8 +349,9 @@ while True:
 
     filename = f"person_{timestamp}.jpg"
     # print(f"start predict {timestamp} ")
+    model_frame = static_object_mask.apply(frame)
     results = model.predict(
-        frame,
+        model_frame,
         imgsz=960,
         conf=CONFIDENCE,
         device="cpu",
@@ -345,6 +359,13 @@ while True:
         iou=0.5,
         verbose=False
     )
+
+    for i, result in enumerate(results):
+        accepted = static_object_mask.observe(result.boxes.xyxy.tolist())
+        # Adnotacje i Telegram mają pokazywać dokładnie wejście YOLO, z jego maską.
+        # Oryginał bez maski jest osobno przekazywany do buff(frame, ...).
+        result.orig_img = model_frame
+        results[i] = result[accepted]
 
     detected = False
     confidence = 0
