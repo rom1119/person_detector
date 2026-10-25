@@ -16,6 +16,7 @@ class _Candidate:
 class _Mask:
     box: tuple
     expires_at: float
+    first_seen: float
     misses: int = 0
 
 
@@ -34,14 +35,16 @@ class StaticObjectMasker:
     def __init__(
         self,
         required_hits=4,          # Liczba zgodnych wykryć tworzących maskę; minimum 3.
-        window_seconds=30,        # Sekundy historii używanej do uczenia nieruchomości.
+        window_seconds=20,        # Sekundy historii używanej do uczenia nieruchomości.
         mask_seconds=120,         # Sekundy od utworzenia maski do jej wygaśnięcia.
-        patch_size=10,            # Bok łaty w px oryginału; ograniczony rozmiarem obiektu.
+        patch_size=15,            # Bok łaty w px oryginału; ograniczony rozmiarem obiektu.
         center_tolerance=12,      # Dopuszczalne różnice/rozrzut środka ramki w px.
         size_tolerance=0.35,      # Względna zmiana wymiarów ramki; minimum tolerancji to 4 px.
         movement_threshold=4,    # Przesunięcie w px przy spójnym ruchu (>= 80% drogi).
         probe_interval=15,       # Odstęp w sekundach między kontrolami bez maskowania.
         missing_probes=2,        # Liczba kolejnych kontroli bez obiektu usuwająca maskę.
+        mask_iou_threshold=0.45,  # Minimalne IoU już zamrożonego obiektu (0..1); mniej = luźniej.
+        log_events=True,         # Wypisz komunikat przy utworzeniu każdej nowej maski.
     ):
         if required_hits < 3 or patch_size < 1 or int(patch_size) != patch_size:
             raise ValueError("Use at least three hits and an integer patch size >= 1")
@@ -50,6 +53,8 @@ class StaticObjectMasker:
             raise ValueError("Durations and distance thresholds must be positive")
         if not 0 < size_tolerance < 1 or missing_probes < 1:
             raise ValueError("Invalid size tolerance or missing-probe count")
+        if not 0 < mask_iou_threshold <= 1:
+            raise ValueError("Mask IoU threshold must be in (0, 1]")
         self.required_hits = required_hits
         self.window_seconds = window_seconds
         self.mask_seconds = mask_seconds
@@ -59,6 +64,8 @@ class StaticObjectMasker:
         self.movement_threshold = movement_threshold
         self.probe_interval = probe_interval
         self.missing_probes = missing_probes
+        self.mask_iou_threshold = mask_iou_threshold
+        self.log_events = log_events
         self._candidates = []
         self._masks = []
         self._last_probe = -math.inf
@@ -92,6 +99,50 @@ class StaticObjectMasker:
     def _overlaps(first, second):
         return (min(first[2], second[2]) > max(first[0], second[0])
                 and min(first[3], second[3]) > max(first[1], second[1]))
+
+    def _matches_mask(self, reference, box):
+        """Match a frozen object even if its patch makes YOLO shorten the box.
+
+        Keep the reference frozen: repeatedly following shifted boxes could
+        gradually grow/move an ignored area onto a different object.
+        This relaxed rule is not used to learn stationary candidates.
+        """
+        if self._same_object(reference, box):
+            return True
+        width = max(0.0, min(reference[2], box[2]) - max(reference[0], box[0]))
+        height = max(0.0, min(reference[3], box[3]) - max(reference[1], box[1]))
+        intersection = width * height
+        area_reference = (reference[2] - reference[0]) * (reference[3] - reference[1])
+        area_box = (box[2] - box[0]) * (box[3] - box[1])
+        union = area_reference + area_box - intersection
+        return union > 0 and intersection / union >= self.mask_iou_threshold
+
+    def filter_alarm_records(self, records):
+        """Remove static evidence retrospectively after observe has classified it.
+
+        Records hold boxes, their optional box_confidences, and observed_at in
+        monotonic seconds. A frame with another valid object still counts once.
+        Call after every observe, including when no accepted detection remains.
+        Persist the returned records: removed static boxes must not reappear
+        when a mask expires. This method performs no file or network operations.
+        """
+        kept, discarded = [], []
+        for record in records:
+            indices = [
+                i for i, box in enumerate(record['boxes'])
+                if not any(mask.first_seen <= record['observed_at'] < mask.expires_at
+                           and self._matches_mask(mask.box, box) for mask in self._masks)
+            ]
+            if not indices:
+                discarded.append(record)
+                continue
+            remaining = dict(record)
+            remaining['boxes'] = [record['boxes'][i] for i in indices]
+            if 'box_confidences' in record:
+                remaining['box_confidences'] = [record['box_confidences'][i] for i in indices]
+                remaining['confidence'] = max(remaining['box_confidences'])
+            kept.append(remaining)
+        return kept, discarded
 
     def _expire(self, now):
         self._masks = [mask for mask in self._masks if now < mask.expires_at]
@@ -161,7 +212,7 @@ class StaticObjectMasker:
         if self._probe_frame:
             retained = []
             for mask in self._masks:
-                if any(self._same_object(mask.box, box) for box in valid.values()):
+                if any(self._matches_mask(mask.box, box) for box in valid.values()):
                     mask.misses = 0
                 elif any(self._overlaps(mask.box, box) for box in valid.values()):
                     # A substantially different box on an unmodified frame
@@ -177,7 +228,7 @@ class StaticObjectMasker:
         # from counting as multiple temporal observations of the same object.
         available = {
             index: box for index, box in valid.items()
-            if not any(self._same_object(mask.box, box) for mask in self._masks)
+            if not any(self._matches_mask(mask.box, box) for mask in self._masks)
         }
         pairs = []
         for ci, candidate in enumerate(self._candidates):
@@ -202,8 +253,21 @@ class StaticObjectMasker:
                 candidate.samples.append((now, box))
             if self._stationary(list(candidate.samples)):
                 frozen = self._median_box(candidate.samples)
-                self._masks.append(_Mask(frozen, now + self.mask_seconds))
+                if not any(self._matches_mask(mask.box, frozen) for mask in self._masks):
+                    self._masks.append(_Mask(frozen, now + self.mask_seconds,
+                                             first_seen=candidate.samples[0][0]))
+                    if self.log_events:
+                        cx, cy = self._center(frozen)
+                        duration = now - candidate.samples[0][0]
+                        print(
+                            f"[STATIC_MASK] Dodano maskę: środek=({cx:.1f}, {cy:.1f}), "
+                            f"bbox={tuple(round(v, 1) for v in frozen)}, "
+                            f"łata do {self.patch_size}x{self.patch_size} px, "
+                            f"trafienia={len(candidate.samples)} w {duration:.1f}s "
+                            f"(okno {self.window_seconds}s), czas={self.mask_seconds}s",
+                            flush=True,
+                        )
                 newly_masked.append(candidate)
         self._candidates = [c for c in self._candidates if not any(c is n for n in newly_masked)]
         return [index for index, box in valid.items()
-                if not any(self._same_object(mask.box, box) for mask in self._masks)]
+                if not any(self._matches_mask(mask.box, box) for mask in self._masks)]

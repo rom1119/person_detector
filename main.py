@@ -32,14 +32,16 @@ static_filter = StaticObjectFilter()
 # Parametry maskowania zmieniaj tutaj; wartości domyślne są też w klasie.
 static_object_mask = StaticObjectMasker(
     required_hits=4,          # Ile zgodnych wykryć potrzeba do utworzenia maski (min. 3).
-    window_seconds=30,        # Okno historii w sekundach; starsze wykrycia nie są liczone.
+    window_seconds=20,        # Okno historii w sekundach; starsze wykrycia nie są liczone.
     mask_seconds=120,         # Czas życia maski w sekundach, bez przedłużania wykryciami.
-    patch_size=10,            # Bok czarnej łaty w pikselach oryginalnej klatki.
+    patch_size=15,            # Bok czarnej łaty w pikselach oryginalnej klatki.
     center_tolerance=12,      # Tolerancja położenia i rozrzutu środka ramki w pikselach.
     size_tolerance=0.35,      # Tolerancja zmiany szerokości/wysokości: 0.35 = 35% (min. 4 px).
     movement_threshold=4,    # Spójne przesunięcie od tylu pikseli wyklucza nieruchomość.
     probe_interval=15,       # Co ile sekund YOLO sprawdza klatkę bez maski.
     missing_probes=2,        # Ile kontroli bez obiektu usuwa maskę przed upływem jej czasu.
+    mask_iou_threshold=0.45, # IoU już zapamiętanej ramki; niższe = większa tolerancja zmian.
+    log_events=True,         # Print przy dodaniu nowej maski (bez wypisywania co klatkę).
 )
 cameraController = ReolinkController(
     host=REOLINK_IP,
@@ -261,6 +263,16 @@ def checkIfCanRun(frame):
     return True
 # save to buffer
 
+def prune_detections():
+    global detections
+    cutoff = datetime.now() - timedelta(seconds=WINDOW_SECONDS)
+    recent = [d for d in detections if d["time"] >= cutoff]
+    detections, excluded = static_object_mask.filter_alarm_records(recent)
+    if excluded:
+        print(f"[STATIC_MASK] Wykluczono z alarmu {len(excluded)} wcześniejszych klatek; "
+              f"pozostało {len(detections)}/{MIN_DETECTIONS}.", flush=True)
+
+
 def buff(frame, confidence, results):
     global detections
     timestamp = datetime.now()
@@ -284,6 +296,9 @@ def buff(frame, confidence, results):
 
     detections.append({
         "time": timestamp,
+        "observed_at": time.monotonic(),
+        "boxes": [box for r in results for box in r.boxes.xyxy.tolist()],
+        "box_confidences": [value for r in results for value in r.boxes.conf.tolist()],
         "file_buff": filename_buff,
         "file_buff_annot": filename_buff_annotation,
         "filename": filename,
@@ -291,12 +306,7 @@ def buff(frame, confidence, results):
 
     })
     
-    cutoff = datetime.now() - timedelta(seconds=WINDOW_SECONDS)
-
-    detections = [
-        d for d in detections
-        if d["time"] >= cutoff
-    ]
+    prune_detections()
     
     if len(detections) >= MIN_DETECTIONS:
         meanPxChanges = np.mean(lastPxChanges)
@@ -366,6 +376,10 @@ while True:
         # Oryginał bez maski jest osobno przekazywany do buff(frame, ...).
         result.orig_img = model_frame
         results[i] = result[accepted]
+
+    # Cofnij wcześniejsze zliczenia obiektu właśnie uznanego za statyczny,
+    # także wtedy, gdy po filtrowaniu bieżąca klatka nie zawiera już wykryć.
+    prune_detections()
 
     detected = False
     confidence = 0
