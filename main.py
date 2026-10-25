@@ -40,7 +40,7 @@ static_object_mask = StaticObjectMasker(
     movement_threshold=4,    # Spójne przesunięcie od tylu pikseli wyklucza nieruchomość.
     probe_interval=15,       # Co ile sekund YOLO sprawdza klatkę bez maski.
     missing_probes=2,        # Ile kontroli bez obiektu usuwa maskę przed upływem jej czasu.
-    mask_iou_threshold=0.45, # IoU już zapamiętanej ramki; niższe = większa tolerancja zmian.
+    mask_iou_threshold=0.65, # IoU już zapamiętanej ramki; niższe = większa tolerancja zmian.
     log_events=True,         # Print przy dodaniu nowej maski (bez wypisywania co klatkę).
 )
 cameraController = ReolinkController(
@@ -79,7 +79,7 @@ lastEntropies = deque(maxlen=10)
 last_centers = deque(maxlen=5)
 distances = deque(maxlen=4)
 
-MIN_DETECTIONS = 7
+MIN_DETECTIONS = 6
 WINDOW_SECONDS = 60
 
 THRESHOLD_DAMAGED_FRAME = 15
