@@ -1,5 +1,6 @@
 import os
-os.environ["TORCH_CPP_LOG_LEVEL"] = "ERROR"
+from settings import config
+os.environ["TORCH_CPP_LOG_LEVEL"] = config.TORCH_CPP_LOG_LEVEL
 from lib.ReolinkController import ReolinkController
 from ultralytics import YOLO
 import cv2
@@ -19,105 +20,105 @@ from lib.static_object_mask import StaticObjectMasker
 from lib.NotificationWorker import NotificationWorker
 import asyncio
 
-from settings import RTSP_URL
-from settings import REOLINK_IP
-from settings import REOLINK_USER
-from settings import REOLINK_PASSWORD
-from settings import BOT_TOKEN
-from settings import CHAT_ID
-from settings import HOUR_END
+# Wszystkie wartości konfiguracyjne: .env.example (PD_*), odczyt w settings.py.
+action_policy = config.ACTION_POLICY
+RTSP_URL = config.RTSP_URL
+BOT_TOKEN = config.TELEGRAM_TOKEN
+CHAT_ID = config.TELEGRAM_CHAT_ID
 
 
-static_filter = StaticObjectFilter()
-# Parametry maskowania zmieniaj tutaj; wartości domyślne są też w klasie.
-static_object_mask = StaticObjectMasker(
-    required_hits=4,          # Ile zgodnych wykryć potrzeba do utworzenia maski (min. 3).
-    window_seconds=20,        # Okno historii w sekundach; starsze wykrycia nie są liczone.
-    mask_seconds=120,         # Czas życia maski w sekundach, bez przedłużania wykryciami.
-    patch_size=15,            # Bok czarnej łaty w pikselach oryginalnej klatki.
-    center_tolerance=12,      # Tolerancja położenia i rozrzutu środka ramki w pikselach.
-    size_tolerance=0.35,      # Tolerancja zmiany szerokości/wysokości: 0.35 = 35% (min. 4 px).
-    movement_threshold=4,    # Spójne przesunięcie od tylu pikseli wyklucza nieruchomość.
-    probe_interval=15,       # Co ile sekund YOLO sprawdza klatkę bez maski.
-    missing_probes=2,        # Ile kontroli bez obiektu usuwa maskę przed upływem jej czasu.
-    mask_iou_threshold=0.65, # IoU już zapamiętanej ramki; niższe = większa tolerancja zmian.
-    log_events=True,         # Print przy dodaniu nowej maski (bez wypisywania co klatkę).
-)
+def debug_print(*args, **kwargs):
+    if config.DEBUG_LOGS:
+        print(*args, **kwargs)
+
+
+static_filter = StaticObjectFilter(**config.STATIC_OPTIONS)
+static_object_mask = StaticObjectMasker(**config.MASK_OPTIONS)
 cameraController = ReolinkController(
-    host=REOLINK_IP,
-    username=REOLINK_USER,
-    password=REOLINK_PASSWORD
+    host=config.REOLINK_HOST, username=config.REOLINK_USER, password=config.REOLINK_PASSWORD,
+    channel=config.REOLINK_CHANNEL,
+    retry_seconds=config.REOLINK_RETRY_SECONDS,
+    watchdog_seconds=config.REOLINK_WATCHDOG_SECONDS,
+    light_seconds=config.LIGHT_DURATION_SECONDS,
+    siren_seconds=config.SIREN_DURATION_SECONDS,
+    poll_seconds=config.ACTION_POLL_SECONDS,
+    light_allowed=lambda: action_policy.allowed("light"),
+    siren_allowed=lambda: action_policy.allowed("siren"),
+    autostart=config.LIGHT_ENABLED or config.SIREN_ENABLED,
 )
 
-MODEL_PATH = "best.pt"
+MODEL_PATH = config.MODEL_PATH
 
 
-DETECTION_START_HOUR = 1
-DETECTION_END_HOUR = HOUR_END
 
-CONFIDENCE = 0.50
+
+CONFIDENCE = config.MODEL_CONFIDENCE
 
 model = YOLO(MODEL_PATH)
 
 last_notification = 0
-NOTIFICATION_COOLDOWN = 2
+NOTIFICATION_COOLDOWN = config.TELEGRAM_MESSAGE_COOLDOWN_SECONDS
 
-BUFFER_DIR = Path("./files/buffer")
-BUFFER_ANNOTATED_DIR = Path("./files/buff_annot")
-CLEAR_FRAME_PATH = Path("./files/clear")
-ANNOTATED_FRAME_PATH = Path("./files/annotated")
-DAMAGED_FRAME_PATH = Path("./files/damaged")
+BUFFER_DIR = config.BUFFER_DIR
+BUFFER_ANNOTATED_DIR = config.BUFFER_ANNOTATED_DIR
+CLEAR_FRAME_PATH = config.CLEAR_DIR
+ANNOTATED_FRAME_PATH = config.ANNOTATED_DIR
+DAMAGED_FRAME_PATH = config.DAMAGED_DIR
 
-#BUFFER_DIR.mkdir(exist_ok=True)
+for directory in (BUFFER_DIR, BUFFER_ANNOTATED_DIR, CLEAR_FRAME_PATH, ANNOTATED_FRAME_PATH, DAMAGED_FRAME_PATH):
+    directory.mkdir(parents=True, exist_ok=True)
 
 detections = []
 lastPxChange = 0
 lastEntropy = 0
-lastPxChanges = deque(maxlen=10)
-lastEntropies = deque(maxlen=10)
+lastPxChanges = deque(maxlen=config.PIXEL_HISTORY_SIZE)
+lastEntropies = deque(maxlen=config.ENTROPY_HISTORY_SIZE)
 
-last_centers = deque(maxlen=5)
-distances = deque(maxlen=4)
+last_centers = deque(maxlen=config.MOTION_HISTORY_SIZE)
+distances = deque(maxlen=config.MOTION_HISTORY_SIZE - 1)
 
-MIN_DETECTIONS = 6
-WINDOW_SECONDS = 60
+MIN_DETECTIONS = config.ALARM_MIN_DETECTIONS
+WINDOW_SECONDS = config.ALARM_WINDOW_SECONDS
 
-THRESHOLD_DAMAGED_FRAME = 15
+
 
 # cap = cv2.VideoCapture(RTSP_URL)
 
 class Camera:
     def __init__(self, url):
+        self.url = url
         self.cap = cv2.VideoCapture(url)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, config.RTSP_BUFFER_SIZE)
         
         self.frame = None
         self.lock = threading.Lock()
         self.running = True
         self.failed_reads = 0
-        self.connected_at = time.time()
+        self.connected_at = time.monotonic()
 
         t = threading.Thread(target=self.update, daemon=True)
         t.start()
 
     def update(self):
         while self.running:
-            current_hour = datetime.now().hour
-            if not (DETECTION_START_HOUR <= current_hour < DETECTION_END_HOUR):
-                time.sleep(60)
+            if not action_policy.should_detect():
+                with self.lock:
+                    self.frame = None
+                time.sleep(config.IDLE_SLEEP_SECONDS)
                 continue
             ret, frame = self.cap.read()
             
-            if time.time() - self.connected_at > 6 * 3600:
-                print("RTSP reconnect... every x hours")
+            if time.monotonic() - self.connected_at > config.RTSP_RECONNECT_SECONDS:
+                debug_print("RTSP reconnect... every x hours")
                 self.reconnect()
 
-                self.connected_at = time.time()
+                self.connected_at = time.monotonic()
                 continue
 
             if not ret:
                 self.failed_reads += 1
 
-                if self.failed_reads > 5:
+                if self.failed_reads > config.RTSP_MAX_FAILED_READS:
                     self.reconnect()
                     self.failed_reads = 0
 
@@ -128,7 +129,7 @@ class Camera:
                 self.frame = frame
                 
     def reconnect(self):
-        print("RTSP reconnect...")
+        debug_print("RTSP reconnect...")
 
         try:
             self.cap.release()
@@ -137,16 +138,16 @@ class Camera:
             
         while self.running:
 
-            time.sleep(2)
+            time.sleep(config.RTSP_RETRY_SECONDS)
 
             # cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG)
-            cap = cv2.VideoCapture(RTSP_URL)
+            cap = cv2.VideoCapture(self.url)
 
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, config.RTSP_BUFFER_SIZE)
             ret, frame = cap.read()
             
             if ret :
-                print("Reconnect OK")
+                debug_print("Reconnect OK")
                 
                 self.cap = cap
                 with self.lock:
@@ -154,7 +155,7 @@ class Camera:
                     
                 return
             
-            print("Reconnect failed...")
+            debug_print("Reconnect failed...")
             cap.release()
 
     def get_frame(self):
@@ -186,58 +187,54 @@ def calcPixelChange(frame):
     pxChangeDiff = abs((np.mean(lastPxChanges) - lastPxChange))
     
     entropyChangeDiff = abs((np.mean(lastEntropies) - lastEntropy))
-    resEntropy = entropyChangeDiff > 1
-    res = pxChangeDiff > 1.6
+    resEntropy = entropyChangeDiff > config.ENTROPY_CHANGE_THRESHOLD
+    res = pxChangeDiff > config.PIXEL_CHANGE_THRESHOLD
     
-    #print(f"lastEntropies MEAN - {np.mean(lastEntropies)}")
-    #print(f"lastEntropy - {lastEntropy}")
+    #debug_print(f"lastEntropies MEAN - {np.mean(lastEntropies)}")
+    #debug_print(f"lastEntropy - {lastEntropy}")
     
     if resEntropy == True:
-        print(f"lastEntropies MEAN - {np.mean(lastEntropies)}")
-        print(f"lastEntropy - {lastEntropy}")
+        debug_print(f"lastEntropies MEAN - {np.mean(lastEntropies)}")
+        debug_print(f"lastEntropy - {lastEntropy}")
     
     if res == True:
         
-        print(f"pixel changes MEAN - {lastPxChanges}")
-        print(f"pixel changes MEAN - {np.mean(lastPxChanges)}")
-        print(f"pixel changes lastPxChange - {lastPxChange}")
-        print(f"pixel changes lastPxChange 1111 - {pxChangeDiff}")
-        print(f"lastEntropies MEAN - {np.mean(lastEntropies)}")
-        print(f"lastEntropy - {lastEntropy}")
+        debug_print(f"pixel changes MEAN - {lastPxChanges}")
+        debug_print(f"pixel changes MEAN - {np.mean(lastPxChanges)}")
+        debug_print(f"pixel changes lastPxChange - {lastPxChange}")
+        debug_print(f"pixel changes lastPxChange 1111 - {pxChangeDiff}")
+        debug_print(f"lastEntropies MEAN - {np.mean(lastEntropies)}")
+        debug_print(f"lastEntropy - {lastEntropy}")
         return True;
 
     return False
     
 
 def send_photo(photo_path, confidence):
-    with open(photo_path, "rb") as photo:
+    for attempt in range(config.TELEGRAM_ATTEMPTS):
+        delay = config.TELEGRAM_SEND_DELAY_SECONDS if attempt == 0 else config.TELEGRAM_RETRY_SECONDS
+        time.sleep(delay)
+        # Kolejka mogła czekać, a w międzyczasie skończyły się godziny Telegrama.
+        if not action_policy.allowed("telegram"):
+            return
         try:
-            time.sleep(0.1)
-            requests.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                data={
-                    "chat_id": CHAT_ID,
-                    "caption": f"Wykryto osobę na podwórku (time= {datetime.now()}) , confidence= {confidence:.2f}"
-                },
-                files={
-                    "photo": photo
-                }
-            )
-        except:
-            time.sleep(1)
-            requests.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                data={
-                    "chat_id": CHAT_ID,
-                    "caption": f"Wykryto osobę na podwórku (time= {datetime.now()}) , confidence= {confidence:.2f}"
-                },
-                files={
-                    "photo": photo
-                }
-            )
+            with open(photo_path, "rb") as photo:
+                response = requests.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+                    data={"chat_id": CHAT_ID,
+                          "caption": f"Wykryto osobę na podwórku (time= {action_policy.now()}) , confidence= {confidence:.2f}"},
+                    files={"photo": photo},
+                    timeout=config.TELEGRAM_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+            return
+        except requests.RequestException:
+            if attempt + 1 >= config.TELEGRAM_ATTEMPTS:
+                raise
+
 
 notification_worker = NotificationWorker(
-    send_photo
+    send_photo, queue_timeout=config.QUEUE_TIMEOUT_SECONDS
 )
 
 
@@ -246,18 +243,18 @@ def checkIfCanRun(frame):
         
     scorePxLargeChange = calcPixelChange(frame)
 
-    # print(f"pixel changes in frame - {scorePxLargeChange}")
+    # debug_print(f"pixel changes in frame - {scorePxLargeChange}")
 
     if scorePxLargeChange == True:
-        print(f"DAMAGED frame")
+        debug_print(f"DAMAGED frame")
         filename = timestamp.strftime(
             f"p_%Y_%m_%d_%H_%M_%S_%f_{scorePxLargeChange:.2f}.jpg"
         )
 # save damaged frame
         filename = DAMAGED_FRAME_PATH / filename
 
-        cv2.imwrite(str(filename), frame)
-        time.sleep(1)
+        cv2.imwrite(str(filename), frame, [cv2.IMWRITE_JPEG_QUALITY, config.JPEG_QUALITY])
+        time.sleep(config.DAMAGED_FRAME_SLEEP_SECONDS)
         return False
         
     return True
@@ -265,7 +262,7 @@ def checkIfCanRun(frame):
 
 def prune_detections():
     global detections
-    cutoff = datetime.now() - timedelta(seconds=WINDOW_SECONDS)
+    cutoff = action_policy.now() - timedelta(seconds=WINDOW_SECONDS)
     recent = [d for d in detections if d["time"] >= cutoff]
     detections, excluded = static_object_mask.filter_alarm_records(recent)
     if excluded:
@@ -275,8 +272,8 @@ def prune_detections():
 
 def buff(frame, confidence, results):
     global detections
-    timestamp = datetime.now()
-    print(timestamp.strftime(
+    timestamp = action_policy.now()
+    debug_print(timestamp.strftime(
         "buff_%Y_%m_%d_%H_%M_%S_%f"
     ))
 
@@ -286,13 +283,13 @@ def buff(frame, confidence, results):
 # Zapisz oryginalną klatkę bez maski i bez ramek YOLO.
     filename_buff = BUFFER_DIR / filename
 
-    cv2.imwrite(str(filename_buff), frame)
+    cv2.imwrite(str(filename_buff), frame, [cv2.IMWRITE_JPEG_QUALITY, config.JPEG_QUALITY])
     
 # Zapisz ramki YOLO na obrazie użytym do predykcji, razem z zastosowaną maską.
     filename_buff_annotation = BUFFER_ANNOTATED_DIR / filename
 
-    annotated_frame = results[0].plot(line_width=1,font_size=1)
-    cv2.imwrite(str(filename_buff_annotation), annotated_frame)
+    annotated_frame = results[0].plot(line_width=config.ANNOTATION_LINE_WIDTH, font_size=config.ANNOTATION_FONT_SIZE)
+    cv2.imwrite(str(filename_buff_annotation), annotated_frame, [cv2.IMWRITE_JPEG_QUALITY, config.JPEG_QUALITY])
 
     detections.append({
         "time": timestamp,
@@ -312,8 +309,8 @@ def buff(frame, confidence, results):
         meanPxChanges = np.mean(lastPxChanges)
         meanEntropy = np.mean(lastEntropies)
         print("ALARM!")
-        print(f" pixel changes  - mean {meanPxChanges:.2f} / last {lastPxChange:.2f}")
-        print(f" entropy changes  - mean {meanEntropy:.2f} /  last {lastEntropy:.2f}")
+        debug_print(f" pixel changes  - mean {meanPxChanges:.2f} / last {lastPxChange:.2f}")
+        debug_print(f" entropy changes  - mean {meanEntropy:.2f} /  last {lastEntropy:.2f}")
 
         for i, detection in enumerate(detections):
         
@@ -331,43 +328,45 @@ def buff(frame, confidence, results):
                 destination_annotated
             )
 
-            if detection == detections[0] or detection == detections[-1]:
+            if action_policy.allowed("telegram") and (
+                not config.TELEGRAM_SEND_FIRST_LAST_ONLY
+                or detection == detections[0] or detection == detections[-1]
+            ):
                 notification_worker.add(
                     (destination_annotated, detection["confidence"])
                 )
-        cameraController.alarm()
+        if action_policy.allowed("light") or action_policy.allowed("siren"):
+            cameraController.alarm()
         detections.clear()
 
 while True:
-    timestamp = datetime.now()
+    timestamp = action_policy.now()
     
-    current_hour = datetime.now().hour
-
-    if not (DETECTION_START_HOUR <= current_hour < DETECTION_END_HOUR):
-        time.sleep(60)
+    if not action_policy.should_detect():
+        time.sleep(config.IDLE_SLEEP_SECONDS)
         continue
 
     frame = camera.get_frame()
     if frame is None:
-        time.sleep(0.8)
+        time.sleep(config.NO_FRAME_SLEEP_SECONDS)
         continue
         
     if checkIfCanRun(frame) == False:
         continue
 
-    timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S_%f")
+    timestamp = action_policy.now().strftime("%Y_%m_%d_%H_%M_%S_%f")
 
     filename = f"person_{timestamp}.jpg"
-    # print(f"start predict {timestamp} ")
+    # debug_print(f"start predict {timestamp} ")
     model_frame = static_object_mask.apply(frame)
     results = model.predict(
         model_frame,
-        imgsz=960,
+        imgsz=config.MODEL_IMGSZ,
         conf=CONFIDENCE,
-        device="cpu",
-        classes=[0],
-        iou=0.5,
-        verbose=False
+        device=config.MODEL_DEVICE,
+        classes=config.MODEL_CLASSES,
+        iou=config.MODEL_IOU,
+        verbose=config.MODEL_VERBOSE
     )
 
     for i, result in enumerate(results):
@@ -387,21 +386,21 @@ while True:
     for r in results:
         if len(r.boxes) > 0:
             detected = True
-            # print(f"len e.boxes {len(r.boxes)} ")
+            # debug_print(f"len e.boxes {len(r.boxes)} ")
             for box in r.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                # print(f"len box.xyxy {len(box.xyxy)} ")
+                # debug_print(f"len box.xyxy {len(box.xyxy)} ")
                 center_x = (x1 + x2) // 2
                 center_y = (y1 + y2) // 2
                 center = (center_x, center_y)
                 confidence = float(box.conf[0])
                 
                 if static_filter.should_ignore(center):
-                    print(f"static filter WORKS !!! centers - {last_centers}")
+                    debug_print(f"static filter WORKS !!! centers - {last_centers}")
                     detected = False
                     break
                     
-                distances = deque(maxlen=5)
+                distances = deque(maxlen=config.MOTION_HISTORY_SIZE - 1)
                 last_centers.append(center)
                 
 
@@ -414,24 +413,24 @@ while True:
 
                         d = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
                         distances.append(d)
-                        print(f"added distance - {d}")
+                        debug_print(f"added distance - {d}")
 		    
                     avg_distance = sum(distances) / len(distances)
-                    print(f"DETECTED- {confidence} / {timestamp} / x={center_x} y={center_y}")
-                    print(f"last centers - {last_centers}")
-                    print(f" distances - {distances}")
-                    print(f" avg_distance - {avg_distance}")
+                    debug_print(f"DETECTED- {confidence} / {timestamp} / x={center_x} y={center_y}")
+                    debug_print(f"last centers - {last_centers}")
+                    debug_print(f" distances - {distances}")
+                    debug_print(f" avg_distance - {avg_distance}")
                     lastDist = distances[-1]
-                    if lastDist > 550:
-                        print(f"Podejrzany ostatni ruch ")
+                    if lastDist > config.MOTION_MAX_JUMP_PX:
+                        debug_print(f"Podejrzany ostatni ruch ")
                         detected = False
                         continue
-                    if avg_distance > 480 :
-                        print(f"Podejrzany ruch duzy skok ")
+                    if avg_distance > config.MOTION_MAX_AVERAGE_PX:
+                        debug_print(f"Podejrzany ruch duzy skok ")
                         detected = False
                         continue
-                    if avg_distance < 3:
-                        print(f"Podejrzany ruch maly ruch ")
+                    if avg_distance < config.MOTION_MIN_AVERAGE_PX:
+                        debug_print(f"Podejrzany ruch maly ruch ")
                         detected = False
                         continue
                 
@@ -440,13 +439,13 @@ while True:
    # cv2.imwrite(CLEAR_FRAME_PATH, frame)
 
     if detected:
-        text = f"{datetime.now()} Wykryto osobę: conf {confidence:.2f}"
-        print(text)
+        text = f"{action_policy.now()} Wykryto osobę: conf {confidence:.2f}"
+        debug_print(text)
         # send_notification(text)
         buff(frame, confidence, results)
         
 
-    time.sleep(0.3)
+    time.sleep(config.LOOP_DELAY_SECONDS)
     
     
     
@@ -455,7 +454,7 @@ def send_notification(text):
 
     now = time.time()
 
-    if now - last_notification < NOTIFICATION_COOLDOWN:
+    if not action_policy.allowed("telegram") or now - last_notification < NOTIFICATION_COOLDOWN:
         return
 
     requests.post(
@@ -463,8 +462,9 @@ def send_notification(text):
         data={
             "chat_id": CHAT_ID,
             "text": text
-        }
-    )
+        },
+        timeout=config.TELEGRAM_TIMEOUT_SECONDS,
+    ).raise_for_status()
 
     last_notification = now
 

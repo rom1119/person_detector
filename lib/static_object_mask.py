@@ -45,6 +45,9 @@ class StaticObjectMasker:
         missing_probes=2,        # Liczba kolejnych kontroli bez obiektu usuwająca maskę.
         mask_iou_threshold=0.45,  # Minimalne IoU już zamrożonego obiektu (0..1); mniej = luźniej.
         log_events=True,         # Wypisz komunikat przy utworzeniu każdej nowej maski.
+        min_size_tolerance=4,    # Minimalna tolerancja wymiarów ramki w px.
+        directionality=0.8,      # Przesunięcie / cała droga, od którego ruch jest spójny.
+        history_limit=256,       # Maksymalna liczba obserwacji jednego kandydata.
     ):
         if required_hits < 3 or patch_size < 1 or int(patch_size) != patch_size:
             raise ValueError("Use at least three hits and an integer patch size >= 1")
@@ -55,6 +58,8 @@ class StaticObjectMasker:
             raise ValueError("Invalid size tolerance or missing-probe count")
         if not 0 < mask_iou_threshold <= 1:
             raise ValueError("Mask IoU threshold must be in (0, 1]")
+        if min_size_tolerance < 0 or not 0 < directionality <= 1 or history_limit < required_hits:
+            raise ValueError("Invalid dimension tolerance, directionality or history limit")
         self.required_hits = required_hits
         self.window_seconds = window_seconds
         self.mask_seconds = mask_seconds
@@ -66,6 +71,9 @@ class StaticObjectMasker:
         self.missing_probes = missing_probes
         self.mask_iou_threshold = mask_iou_threshold
         self.log_events = log_events
+        self.min_size_tolerance = min_size_tolerance
+        self.directionality = directionality
+        self.history_limit = history_limit
         self._candidates = []
         self._masks = []
         self._last_probe = -math.inf
@@ -91,7 +99,7 @@ class StaticObjectMasker:
             return False
         for lo, hi in ((0, 2), (1, 3)):
             size = first[hi] - first[lo]
-            if abs((second[hi] - second[lo]) - size) > max(4, size * self.size_tolerance):
+            if abs((second[hi] - second[lo]) - size) > max(self.min_size_tolerance, size * self.size_tolerance):
                 return False
         return True
 
@@ -194,7 +202,7 @@ class StaticObjectMasker:
             return False
         displacement = math.dist(centers[0], centers[-1])
         path = sum(math.dist(a, b) for a, b in zip(centers, centers[1:]))
-        if displacement >= self.movement_threshold and path and displacement / path >= 0.8:
+        if displacement >= self.movement_threshold and path and displacement / path >= self.directionality:
             return False
         return True
 
@@ -247,7 +255,7 @@ class StaticObjectMasker:
         for index, box in available.items():
             candidate = assignments.get(index)
             if candidate is None:
-                candidate = _Candidate()
+                candidate = _Candidate(samples=deque(maxlen=self.history_limit))
                 self._candidates.append(candidate)
             if not candidate.samples or now > candidate.samples[-1][0]:
                 candidate.samples.append((now, box))

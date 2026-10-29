@@ -11,13 +11,21 @@ class StaticObjectFilter:
         static_time=30,
         ignore_time=120,
         match_distance=60,
-        max_move=3
+        max_move=3,
+        min_observations=3,
+        time_tolerance=2,
+        retention_extra=60,
+        log_events=True,
     ):
 
         self.static_time = static_time
         self.ignore_time = ignore_time
         self.match_distance = match_distance
         self.max_move = max_move
+        self.min_observations = min_observations
+        self.time_tolerance = time_tolerance
+        self.retention_extra = retention_extra
+        self.log_events = log_events
 
         self.tracks = []
 
@@ -27,7 +35,8 @@ class StaticObjectFilter:
 
         track.add_detection(center)
         track.cleanup(self.static_time)
-        print(f"added track WORKS !!! - {self.tracks}")
+        if self.log_events:
+            print(f"added track WORKS !!! - {self.tracks}")
         now = time.time()
 
         if now < track.ignore_until:
@@ -35,7 +44,8 @@ class StaticObjectFilter:
 
         if self._is_static(track):
 
-            print("STATIC OBJECT -> IGNORE")
+            if self.log_events:
+                print("STATIC OBJECT -> IGNORE")
 
             track.ignore_until = now + self.ignore_time
 
@@ -49,7 +59,7 @@ class StaticObjectFilter:
 
         self.tracks = [
             t for t in self.tracks
-            if now - t.last_seen < self.ignore_time + 60
+            if now - t.last_seen < self.ignore_time + self.retention_extra
         ]
 
         best = None
@@ -80,10 +90,10 @@ class StaticObjectFilter:
 
         history = track.history
 
-        if len(history) < 3:
+        if len(history) < self.min_observations:
             return False
 
-        if history[-1][0] - history[0][0] < self.static_time - 2:
+        if history[-1][0] - history[0][0] < self.static_time - self.time_tolerance:
             return False
 
         xs = [h[1] for h in history]
